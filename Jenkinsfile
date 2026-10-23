@@ -198,7 +198,20 @@ pipeline {
                 expression { params.ENVIRONMENT == 'UAT' }
             }
             steps {
-                script { deployFrontend() }
+                // UAT is a placeholder (same as the other apps' pipelines): the
+                // build + artifact are produced, but no SSH deploy runs here, so
+                // NO deploy-login-uat / uat-server-ip credentials are required.
+                sh """
+                    set -e
+                    echo "UAT build complete (no automated deploy)."
+                    echo "Release: ${env.RELEASE}"
+                    echo "Environment: ${env.ENVIRONMENT}"
+                    echo "Remote Path: ${env.REMOTE_PATH}"
+                """
+                // To enable a real UAT deploy later: create the Jenkins credentials
+                // deploy-login-uat (username/password) + uat-server-ip (secret text),
+                // then replace the echo block above with:
+                //   script { deployFrontend() }
             }
         }
 
