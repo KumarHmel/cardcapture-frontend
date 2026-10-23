@@ -1,40 +1,3 @@
-// =============================================================================
-//  Jenkinsfile  -  cardcapture_frontend  (React + TypeScript + Vite -> static)
-// -----------------------------------------------------------------------------
-//  Built from the same pipeline skeleton as the backend, but a frontend is a
-//  STATIC build: there is no runtime process, no pm2, no DB migrations.
-//
-//    Backend (NestJS)               ->   Frontend (Vite SPA)
-//    --------------------------------------------------------------------
-//    npm run build -> dist/main.js  ->   vite build -> dist/ (static assets)
-//    ship dist + node_modules       ->   ship ONLY dist/ (static files)
-//    pm2 start/reload               ->   copy to web root + reload Apache (httpd)
-//    artisan/sql migrations         ->   none
-//    runtime shared .env            ->   build-time .env (VITE_* baked into bundle)
-//
-//  IMPORTANT NOTES
-//    - VITE_* variables are compiled INTO the bundle at build time, so the
-//      correct .env must be present BEFORE `vite build`. This pipeline injects
-//      it from an optional per-env Jenkins "Secret file" credential
-//      `frontend-env-<env>` (uat/dev/prd). If absent, it builds with the
-//      in-repo defaults (vite.config.ts `define` + code fallbacks).
-//    - package.json's `copy-htaccess` uses the Windows `copy` command and will
-//      fail on a Linux agent, so this pipeline runs the build steps directly
-//      and copies .htaccess with `cp`. (Recommend making that npm script
-//      cross-platform so local == CI.)
-//    - .htaccess contains SPA rewrite rules; the Apache vhost serving the web
-//      root must have `AllowOverride All` for them to take effect.
-//
-//  REQUIREMENTS
-//    - Jenkins agent: Node.js 20.x + npm on PATH (or configure the NodeJS plugin).
-//    - Target server: Apache (httpd) serving the web root; sudo for reload.
-//    - Jenkins credentials (lowercase <env> = uat/dev/prd):
-//          deploy-path-<env>      (Secret text)  base deploy path
-//          deploy-login-<env>     (Username/pwd) SSH user + password
-//          <env>-server-ip        (Secret text)  target host / IP
-//          frontend-env-<env>     (Secret file)  OPTIONAL build-time .env
-// =============================================================================
-
 pipeline {
     agent any
 
@@ -101,9 +64,6 @@ pipeline {
             }
         }
 
-        // ---------------------------------------------------------------------
-        //  Build-time environment (VITE_* get baked into the bundle here)
-        // ---------------------------------------------------------------------
         stage('Prepare Build Env') {
             steps {
                 script {
@@ -131,7 +91,7 @@ pipeline {
         }
 
         stage('Lint') {
-            // Non-blocking by default; drop the "|| true" to gate the build on lint.
+            
             steps {
                 sh '''
                     set -uo pipefail
@@ -159,9 +119,6 @@ pipeline {
             }
         }
 
-        // ---------------------------------------------------------------------
-        //  Package ONLY the static build output (dist/ contents, incl. dotfiles)
-        // ---------------------------------------------------------------------
         stage('Create Artifact') {
             steps {
                 sh """
@@ -189,9 +146,6 @@ pipeline {
             }
         }
 
-        // ---------------------------------------------------------------------
-        //  Deployments
-        // ---------------------------------------------------------------------
         stage('Deploy To UAT') {
             when {
                 expression { params.ONLY_BUILD_ARTIFACT == false }
@@ -249,11 +203,6 @@ pipeline {
     }
 }
 
-// =============================================================================
-//  Shared deploy routine (used by UAT and PRD).
-//  Uploads the static tarball, extracts it into a timestamped release, repoints
-//  the Apache web-root symlink, fixes ownership, and reloads httpd.
-// =============================================================================
 def deployFrontend() {
     withCredentials([
         usernamePassword(credentialsId: "deploy-login-${env.ENVIRONMENT}",
@@ -291,14 +240,10 @@ def deployFrontend() {
             # Serve it: Apache serves this web-root symlink (vhost needs AllowOverride All)
             sudo ln -sfn \$RELEASE_DIR /var/www/html/${env.PORTAL}/${env.APP_NAME}
 
-            sudo chown -R apache:apache \$RELEASE_DIR
             sudo chmod -R 755 \$RELEASE_DIR
 
             # Keep only the 3 most recent releases
             ls -1dt ${env.REMOTE_PATH}/releases/*/ | tail -n +4 | xargs rm -rf || true
-
-            # Reload Apache to pick up the new document root (no downtime)
-            sudo systemctl reload httpd
 
             echo "Deployment SUCCESS (release ${env.RELEASE})"
         """
